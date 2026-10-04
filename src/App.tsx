@@ -72,6 +72,7 @@ import {
   RefreshCw,
   Save,
   ShieldCheck,
+  Siren,
   SkipForward,
   Trash2,
   Undo2,
@@ -96,6 +97,8 @@ import {
   formatTime,
   useLightingDesk
 } from './state/useLightingDesk';
+import { RescueImportModal } from './rescue/RescueImportModal';
+import { parseRescueSheetText, simulateRescueSheet } from './rescue/rescueSheet';
 import type { Cue, CueConflict, LightingPlan, Scene, UserRole, Workspace } from './types';
 
 const statusColors = {
@@ -572,6 +575,7 @@ export default function App() {
   const [online, setOnline] = useState(true);
   const [savedAt, setSavedAt] = useState('');
   const [syncMessage, setSyncMessage] = useState('离线草稿待命');
+  const [rescueOpen, setRescueOpen] = useState(false);
   const toast = useToast();
   const workspace = state.workspace;
   const activePlan = findActivePlan(workspace);
@@ -622,7 +626,12 @@ export default function App() {
   }, []);
 
   function commit(label: string, mutate: (next: Workspace) => void) {
-    dispatch({ type: 'commit', label, mutate });
+    try {
+      dispatch({ type: 'commit', label, mutate });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast({ title: '写入失败，已恢复原方案，可重试', description: message, status: 'error', duration: 3200 });
+    }
   }
 
   function reorderCue(activeId: string, overId: string) {
@@ -800,8 +809,36 @@ export default function App() {
     dispatch({ type: 'selectCue', sceneId, cueId });
   }
 
-  function exportPlan() {
-    const payload = {
+  function applyRescueSheet(text: string) {
+    const parsed = parseRescueSheetText(text);
+    if (parsed.errors.length) {
+      toast({ title: '救援单格式有问题，已拒绝导入', description: parsed.errors[0], status: 'error', duration: 3000 });
+      return;
+    }
+    // 提交前在当前方案上先对照一次；确认通过后再在单一 commit 事务内重放并整体替换方案，
+    // 任何异常都不会产生半写入，原方案保留，可修改后重试。
+    const probe = simulateRescueSheet(activePlan, parsed.sheet);
+    if (probe.errors.length) {
+      toast({ title: '救援单对照失败，原方案保持不变', description: probe.errors[0], status: 'error', duration: 3000 });
+      return;
+    }
+    if (probe.writableCount === 0) {
+      toast({ title: '所有条目都被冻结或确认状态拦截，未写入', status: 'warning' });
+      return;
+    }
+    commit('导入灯光组救援单并重算时间与冲突', (next) => {
+      const plan = next.plans.find((item) => item.id === next.activePlanId);
+      if (!plan) throw new Error('当前方案不存在，已取消救援单写入');
+      const result = simulateRescueSheet(plan, parsed.sheet);
+      if (result.errors.length || result.writableCount === 0 || !result.draftPlan) {
+        throw new Error('救援单二次对照失败，已取消本次写入');
+      }
+      const targetIndex = next.plans.findIndex((item) => item.id === plan.id);
+      next.plans[targetIndex] = result.draftPlan;
+    });
+  }
+
+  function exportPlan() {    const payload = {
       exportedAt: new Date().toISOString(),
       plan: activePlan,
       conflicts: activeConflicts,
@@ -885,6 +922,9 @@ export default function App() {
               isDisabled={!state.future.length}
               onClick={() => dispatch({ type: 'redo' })}
             />
+            <Button size="sm" variant="outline" colorScheme="orange" leftIcon={<Siren size={15} />} onClick={() => setRescueOpen(true)}>
+              救援单导入
+            </Button>
             <Button size="sm" colorScheme="amber" leftIcon={<Save size={16} />} onClick={() => void persistNow()}>保存</Button>
           </HStack>
         </Flex>
@@ -966,6 +1006,9 @@ export default function App() {
               </Text>
             </Box>
 
+            <Button colorScheme="orange" variant="outline" leftIcon={<Siren size={16} />} onClick={() => setRescueOpen(true)}>
+              导入灯光组救援单
+            </Button>
             <Button variant="outline" leftIcon={<Copy size={16} />} onClick={duplicatePlan}>复制为新方案</Button>
             <Button variant="ghost" leftIcon={<RefreshCw size={16} />} onClick={exportPlan}>导出当前方案 JSON</Button>
           </VStack>
@@ -1143,6 +1186,14 @@ export default function App() {
       <Box as="footer" maxW="1920px" mx="auto" px={5} pb={7} color="whiteAlpha.400" fontSize="xs" textAlign="center">
         所有方案与草稿保存在当前浏览器。清除站点数据会删除灯光设计台内容。
       </Box>
+
+      <RescueImportModal
+        open={rescueOpen}
+        plan={activePlan}
+        role={workspace.role}
+        onClose={() => setRescueOpen(false)}
+        onApply={applyRescueSheet}
+      />
     </Box>
   );
 }

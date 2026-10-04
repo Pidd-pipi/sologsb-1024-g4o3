@@ -68,7 +68,13 @@ export function lightingReducer(state: EditorState, action: EditorAction): Edito
       };
     case 'commit': {
       const next = clone(state.workspace);
-      action.mutate(next);
+      try {
+        action.mutate(next);
+      } catch (error) {
+        // 救援单等批量写入若在事务中途失败，必须整体回滚，原方案与撤销栈都保持不变。
+        console.error('commit rolled back:', error);
+        return { ...state, lastAction: `写入已取消并恢复原方案：${error instanceof Error ? error.message : String(error)}` };
+      }
       normalizeWorkspace(next);
       const active = next.plans.find((plan) => plan.id === next.activePlanId);
       if (active) active.updatedAt = new Date().toISOString();

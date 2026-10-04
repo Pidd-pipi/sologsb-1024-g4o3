@@ -16,6 +16,29 @@
 - 最多 50 步撤销重做；快捷键包括 `↑/↓` 选择提示、`F` 冻结/解冻、`Ctrl/⌘+Z` 撤销、`Ctrl/⌘+Shift+Z` 重做、`Ctrl/⌘+S` 保存。
 - 时间轴、提示列表、复选关系图和冲突面板均提供语义标签、焦点样式和读屏描述。
 - 导出当前方案 JSON，便于制作交接与外部备份。
+- 救援单导入：灯光组可一次送出多个场次的新顺序、提示参数、跟随调整与全案通道替换。导入前先与当前方案对照，列出会失效的跟随关系与受影响提示，舞台监督确认后才写入。
+  - 救援单超过 30 项或 JSON 格式、字段、取值有问题时整单拒绝，原方案保持不变，可修改后重试。
+  - 冻结场次与已确认提示不能被越过：命中条目会整项阻断；被保护提示若存在无法自动解除的失效跟随，写入按钮保持禁用。
+  - 写入在单一事务中完成：失败自动回滚为原方案；成功后立即重算全剧时间与冲突，救援单直接命中的提示、失效跟随提示以及受时间联动影响的未确认提示全部退回“未完成”。
+  - 写入结果与桌面端离线草稿一致：提交后自动写入 `localStorage`，撤销栈保留导入前快照，可整体撤销。
+
+### 救援单格式
+
+```json
+{
+  "title": "演出前夜救援单",
+  "channelReplacements": [{ "from": "Grand Master", "to": "Grand Master A" }],
+  "items": [
+    { "sceneOrder": 1, "cueNumber": "Q2", "order": 1, "brightness": 70, "fadeIn": 6 },
+    { "sceneName": "独白 · 失语", "cueNumber": "Q11", "hold": 12, "followCueNumber": "Q10" },
+    { "sceneOrder": 3, "cueNumber": "Q22", "followCueNumber": null }
+  ]
+}
+```
+
+- 场次可用 `sceneOrder`（场次顺序数字）或 `sceneName`（场次名称）定位；提示用 `cueNumber` 定位。
+- 条目字段均为可选，但每条至少包含一项调整：`order`（场次内 1 起始的位置）、`brightness`、`fadeIn`、`hold`、`fadeOut`、`channel`、`followCueNumber`（`null` 表示清除跟随）。
+- `channelReplacements` 对当前方案逐条命中展开：未冻结场次中的未确认提示直接替换，其余列为阻断命中等待人工处理。
 
 ## 技术栈
 
