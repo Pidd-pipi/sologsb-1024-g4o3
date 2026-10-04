@@ -63,6 +63,7 @@ import {
   Clock3,
   Copy,
   GripVertical,
+  LifeBuoy,
   Lightbulb,
   Lock,
   LockOpen,
@@ -80,23 +81,16 @@ import {
   WifiOff
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import RescueImportModal from './components/RescueImportModal';
 import {
   colorPresets,
   detectConflicts,
   roleLabels,
   statusLabels
 } from './data';
-import {
-  LIGHTING_STORAGE_KEY,
-  canEditScene,
-  canFreeze,
-  findActivePlan,
-  findActiveScene,
-  findActiveCue,
-  formatTime,
-  useLightingDesk
-} from './state/useLightingDesk';
+import { LIGHTING_STORAGE_KEY, canEditScene, canFreeze, findActivePlan, findActiveScene, findActiveCue, formatTime, useLightingDesk } from './state/useLightingDesk';
 import type { Cue, CueConflict, LightingPlan, Scene, UserRole, Workspace } from './types';
+import type { RescuePreview } from './rescue';
 
 const statusColors = {
   draft: 'orange',
@@ -572,6 +566,7 @@ export default function App() {
   const [online, setOnline] = useState(true);
   const [savedAt, setSavedAt] = useState('');
   const [syncMessage, setSyncMessage] = useState('离线草稿待命');
+  const [rescueOpen, setRescueOpen] = useState(false);
   const toast = useToast();
   const workspace = state.workspace;
   const activePlan = findActivePlan(workspace);
@@ -815,6 +810,31 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
+  function applyRescueSheet(preview: RescuePreview) {
+    dispatch({
+      type: 'applyRescue',
+      workspace: preview.next,
+      label: `导入救援单《${preview.title}》并自动重算`
+    });
+    // 立即与离线草稿对齐，不等防抖窗口。
+    try {
+      localStorage.setItem(LIGHTING_STORAGE_KEY, JSON.stringify(preview.next));
+      setSavedAt(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
+    } catch {
+      // 防抖写入仍会兜底，这里不阻断导入流程。
+    }
+    setSyncMessage(
+      `救援单已写入：${preview.appliedGroups.length} 组改动，${preview.blocked.length} 项被拦截，${preview.affected.length} 条提示退回未完成，离线草稿已同步`
+    );
+    setRescueOpen(false);
+    toast({
+      title: '救援单已确认写入',
+      description: `${preview.affected.length} 条提示退回未完成，冲突 ${preview.conflictsBefore.length} → ${preview.conflictsAfter.length}。`,
+      status: preview.newConflicts.length ? 'warning' : 'success',
+      duration: 3200
+    });
+  }
+
   return (
     <Box minH="100vh">
       <Box as="header" position="sticky" top={0} zIndex={50} bg="rgba(9, 14, 24, .88)" backdropFilter="blur(18px)" borderBottomWidth="1px" borderColor="whiteAlpha.100">
@@ -885,6 +905,9 @@ export default function App() {
               isDisabled={!state.future.length}
               onClick={() => dispatch({ type: 'redo' })}
             />
+            <Button size="sm" variant="outline" leftIcon={<LifeBuoy size={16} />} onClick={() => setRescueOpen(true)}>
+              救援单
+            </Button>
             <Button size="sm" colorScheme="amber" leftIcon={<Save size={16} />} onClick={() => void persistNow()}>保存</Button>
           </HStack>
         </Flex>
@@ -1139,6 +1162,15 @@ export default function App() {
           </Box>
         </Box>
       </Grid>
+
+      <RescueImportModal
+        open={rescueOpen}
+        workspace={workspace}
+        role={workspace.role}
+        onClose={() => setRescueOpen(false)}
+        onApply={applyRescueSheet}
+        onSwitchRole={(newRole) => dispatch({ type: 'setRole', role: newRole })}
+      />
 
       <Box as="footer" maxW="1920px" mx="auto" px={5} pb={7} color="whiteAlpha.400" fontSize="xs" textAlign="center">
         所有方案与草稿保存在当前浏览器。清除站点数据会删除灯光设计台内容。

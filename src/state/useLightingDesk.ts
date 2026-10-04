@@ -32,6 +32,7 @@ export function createInitialState(): EditorState {
 export type EditorAction =
   | { type: 'hydrate'; workspace: Workspace }
   | { type: 'commit'; label: string; mutate: (workspace: Workspace) => void }
+  | { type: 'applyRescue'; workspace: Workspace; label: string }
   | { type: 'selectScene'; sceneId: string }
   | { type: 'selectCue'; sceneId: string; cueId: string }
   | { type: 'selectPlan'; planId: string }
@@ -69,6 +70,19 @@ export function lightingReducer(state: EditorState, action: EditorAction): Edito
     case 'commit': {
       const next = clone(state.workspace);
       action.mutate(next);
+      normalizeWorkspace(next);
+      const active = next.plans.find((plan) => plan.id === next.activePlanId);
+      if (active) active.updatedAt = new Date().toISOString();
+      return {
+        workspace: next,
+        past: [...state.past.slice(-49), clone(state.workspace)],
+        future: [],
+        lastAction: action.label
+      };
+    }
+    case 'applyRescue': {
+      // 救援单已在外部完成校验与模拟；这里仅原子写入，保证失败时原方案不被触碰。
+      const next = clone(action.workspace);
       normalizeWorkspace(next);
       const active = next.plans.find((plan) => plan.id === next.activePlanId);
       if (active) active.updatedAt = new Date().toISOString();
